@@ -3,8 +3,10 @@ package websocket
 import (
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -19,9 +21,37 @@ var (
 )
 
 // 连接 websocket server
-// func Dial(url string) (Conn, error) {
+func Dial(urlstr string) (Conn, error) {
+	urlstr, err := wsToHttp(urlstr)
+	if err != nil {
+		return nil, err
+	}
+	r, err := http.NewRequest("GET", urlstr, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := handshake(r)
+	if err != nil {
+		return nil, err
+	}
 
-// }
+}
+
+func wsToHttp(urlstr string) (string, error) {
+	u, err := url.Parse(urlstr)
+	if err != nil {
+		return "", err
+	}
+	switch u.Scheme {
+	case "ws":
+		u.Scheme = "http"
+	case "wss":
+		u.Scheme = "https"
+	default:
+		return "", errors.New("wsToHttp() url scheme wrong")
+	}
+	return u.String(), nil
+}
 
 // 客户端握手请求
 /*
@@ -73,6 +103,37 @@ func handshake(urlstr string) error {
 	}
 }
 */
+
+func handshake(r *http.Request) (*http.Response, error) {
+	key := handshakeKey()
+	r.Header.Add("Upgrade", "websocket")
+	r.Header.Add("Connection", "Upgrade")
+	r.Header.Add("Sec-Websocket-Key", key)
+	r.Header.Add("Sec-Websocket-Version", SEC_WEBSOCKET_VERSION)
+	return http.DefaultClient.Do(r)
+}
+
+func parseHandshake(resp *http.Response) error {
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusSwitchingProtocols:
+		fmt.Println("ok")
+	case http.StatusFound:
+		return handshake(resp.Header.Get("Location"))
+	default:
+		return errors.New("handshake() Connection error: " + resp.Status)
+	}
+
+	if !containsInHeader(resp.Header, "Upgrade", "websocket") {
+		return conn_err
+	}
+	if !containsInHeader(resp.Header, "Connection", "Upgrade") {
+		return conn_err
+	}
+	if resp.Header.Get("Sec-Websocket-Accept") != handshakeAccept(key) {
+		return conn_err
+	}
+}
 
 // create 'Sec-Websocket-Key' header value
 func handshakeKey() string {
