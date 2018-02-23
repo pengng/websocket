@@ -88,7 +88,7 @@ func (f frame) opcode(t frameType) frame {
 	if len(f) == 0 {
 		f = make(frame, 1)
 	}
-	f[0] |= byte(t)
+	f[0] |= byte(t & 0xf)
 	return f
 }
 

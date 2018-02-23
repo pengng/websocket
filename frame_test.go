@@ -53,7 +53,13 @@ func TestOpcode(t *testing.T) {
 	var f frame
 	f = f.opcode(FRAME_TYPE_TEXT)
 	if f[0]&(byte(FRAME_TYPE_TEXT)) == 0 {
-		t.Errorf("opcode should be ok")
+		t.Errorf("opcode() should be ok")
+	}
+
+	var c byte = 0x11
+	f = f.opcode(frameType(c))
+	if f[0]&0xf != c&0xf {
+		t.Errorf("opcode(t) should set opcode as t mod 16 if it more than 4 bits")
 	}
 }
 

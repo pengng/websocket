@@ -1,6 +1,8 @@
 package websocket
 
 import (
+	"bytes"
+	"fmt"
 	"net/http"
 	"testing"
 )
@@ -9,17 +11,44 @@ const (
 	SEC_WEBSOCKET_KEY_BASE64_BYTES = 24
 )
 
-func TestHandshake(t *testing.T) {
+func TestHandshakeKey(t *testing.T) {
 	a, b := handshakeKey(), handshakeKey()
 	if !(len(a) == SEC_WEBSOCKET_KEY_BASE64_BYTES && len(a) == len(b)) {
-		t.Errorf("handshake() Sec-Websocket-Key should be 16 bytes")
+		t.Errorf("handshakeKey() Sec-Websocket-Key should be %d bytes", SEC_WEBSOCKET_KEY_BYTES)
 	}
 	if a == b {
-		t.Errorf("handshake() Sec-Websocket-Key should be random")
+		t.Errorf("handshakeKey() Sec-Websocket-Key should be random")
 	}
 }
 
-func BenchmarkHandshake(b *testing.B) {
+func TestParseUrl(t *testing.T) {
+	in := []string{"", "1234", "ss://localhost:3000"}
+	for _, v := range in {
+		if _, err := parseUrl(v); err == nil {
+			t.Errorf("parseUrl(%q) should return err", in)
+		}
+	}
+}
+
+func TestHandshake(t *testing.T) {
+	var b bytes.Buffer
+	var p, k = "/chat", handshakeKey()
+	err := handshake(&b, p, k)
+	if err != nil {
+		t.Errorf("handshake() should be ok")
+	}
+	s := fmt.Sprintf("GET %s HTTP/1.1\r\n\r\nConnection: Upgrade\r\nSec-Websocket-Key: %s\r\nSec-Websocket-Version: 13\r\nUpgrade: websocket\r\n\r\n", p, k)
+	if b.String() != s {
+		t.Errorf("handshake() The correct http message should be written")
+	}
+	k = "111111111111111111111111"
+	err = handshake(&b, p, k)
+	if err == nil {
+		t.Errorf("handshake() should return err")
+	}
+}
+
+func BenchmarkHandshakeKey(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		handshakeKey()
 	}

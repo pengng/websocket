@@ -1,12 +1,18 @@
 package websocket
 
 import (
+	"bufio"
+	"crypto/tls"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"math/rand"
+	"net"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -21,118 +27,101 @@ var (
 )
 
 // 连接 websocket server
-func Dial(urlstr string) (Conn, error) {
-	urlstr, err := wsToHttp(urlstr)
+func Dial(rawurl string, config *tls.Config) (*socket, error) {
+
+	u, err := parseUrl(rawurl)
 	if err != nil {
 		return nil, err
 	}
-	r, err := http.NewRequest("GET", urlstr, nil)
+	var conn net.Conn
+	if u.Scheme == "ws" {
+		conn, err = net.Dial("tcp", u.Host)
+	} else {
+		conn, err = tls.Dial("tcp", u.Host, config)
+	}
 	if err != nil {
 		return nil, err
 	}
-	resp, err := handshake(r)
+	k := handshakeKey()
+	handshake(conn, u.Path, k)
+	err = parseHandshake(conn, k)
 	if err != nil {
 		return nil, err
 	}
-
+	return &socket{conn: conn}, nil
 }
 
-func wsToHttp(urlstr string) (string, error) {
-	u, err := url.Parse(urlstr)
+func parseUrl(rawurl string) (*url.URL, error) {
+	if ok, _ := regexp.MatchString(`^\w+://\w+(?::\d{1, 5})?`, rawurl); !ok {
+		return nil, errors.New(fmt.Sprintf("parseUrl() The URL %q is invalid.", rawurl))
+	}
+	u, err := url.Parse(rawurl)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	switch u.Scheme {
-	case "ws":
-		u.Scheme = "http"
-	case "wss":
-		u.Scheme = "https"
-	default:
-		return "", errors.New("wsToHttp() url scheme wrong")
+	if !(u.Scheme == "ws" || u.Scheme == "wss") {
+		return nil, errors.New(fmt.Sprintf("parseUrl() The URL's scheme must be either 'ws' or 'wss'. %q is not allowed.", u.Scheme))
 	}
-	return u.String(), nil
+	return u, nil
 }
 
-// 客户端握手请求
-/*
-func handshake(urlstr string) error {
-	u, err := url.Parse(urlstr)
+func handshake(w io.Writer, pathname, key string) error {
+	if ok, _ := regexp.MatchString(`^/.*`, pathname); !ok {
+		return errors.New(fmt.Sprintf("handshake() The pathname %q is invalid.", pathname))
+	}
+	if ok, _ := regexp.MatchString(`^[a-zA-Z0-9+/]{22}==$`, key); !ok {
+		return errors.New("handshake() The key must be base64-encoded 16-bit bytes")
+	}
+	fmt.Fprintf(w, "GET %s HTTP/1.1\r\n\r\n", pathname)
+	h := make(http.Header)
+	h.Add("Upgrade", "websocket")
+	h.Add("Connection", "Upgrade")
+	h.Add("Sec-Websocket-Key", key)
+	h.Add("Sec-Websocket-Version", SEC_WEBSOCKET_VERSION)
+	h.Write(w)
+	_, err := fmt.Fprint(w, "\r\n")
+	return err
+}
+
+func parseHandshake(r io.Reader, key string) error {
+	rd := bufio.NewScanner(r)
+	if !rd.Scan() {
+		if err := rd.Err(); err == io.EOF {
+			return errors.New("parseHandshake() The server not headline response.")
+		} else {
+			return err
+		}
+	}
+	l := rd.Text()
+	a := strings.Split(l, " ")
+	if len(a) < 3 {
+		return errors.New(fmt.Sprintf("parseHandshake() The text %q don't like headline.", l))
+	}
+	c, err := strconv.ParseInt(a[1], 10, 8)
 	if err != nil {
 		return err
 	}
-	switch u.Scheme {
-	case "ws":
-		u.Scheme = "http"
-	case "wss":
-		u.Scheme = "https"
-	default:
-		return errors.New("handshake() url scheme wrong")
+	h := make(http.Header)
+	for rd.Scan() {
+		s := strings.Split(rd.Text(), ": ")
+		if len(s) == 2 {
+			h.Add(s[0], s[1])
+		}
 	}
-	req, err := http.NewRequest("GET", u.String(), nil)
-	if err != nil {
-		return err
-	}
-	key := handshakeKey()
-	req.Header.Add("Upgrade", "websocket")
-	req.Header.Add("Connection", "Upgrade")
-	req.Header.Add("Sec-Websocket-Key", key)
-	req.Header.Add("Sec-Websocket-Version", SEC_WEBSOCKET_VERSION)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	switch resp.StatusCode {
-	case http.StatusSwitchingProtocols:
-		fmt.Println("ok")
-	case http.StatusFound:
-		return handshake(resp.Header.Get("Location"))
-	default:
-		return errors.New("handshake() Connection error: " + resp.Status)
+	if c != http.StatusSwitchingProtocols {
+		return errors.New("parseHandshake() Connection error")
 	}
 
-	if !containsInHeader(resp.Header, "Upgrade", "websocket") {
+	if !containsInHeader(h, "Upgrade", "websocket") {
 		return conn_err
 	}
-	if !containsInHeader(resp.Header, "Connection", "Upgrade") {
+	if !containsInHeader(h, "Connection", "Upgrade") {
 		return conn_err
 	}
-	if resp.Header.Get("Sec-Websocket-Accept") != handshakeAccept(key) {
+	if h.Get("Sec-Websocket-Accept") != handshakeAccept(key) {
 		return conn_err
 	}
-}
-*/
-
-func handshake(r *http.Request) (*http.Response, error) {
-	key := handshakeKey()
-	r.Header.Add("Upgrade", "websocket")
-	r.Header.Add("Connection", "Upgrade")
-	r.Header.Add("Sec-Websocket-Key", key)
-	r.Header.Add("Sec-Websocket-Version", SEC_WEBSOCKET_VERSION)
-	return http.DefaultClient.Do(r)
-}
-
-func parseHandshake(resp *http.Response) error {
-	defer resp.Body.Close()
-	switch resp.StatusCode {
-	case http.StatusSwitchingProtocols:
-		fmt.Println("ok")
-	case http.StatusFound:
-		return handshake(resp.Header.Get("Location"))
-	default:
-		return errors.New("handshake() Connection error: " + resp.Status)
-	}
-
-	if !containsInHeader(resp.Header, "Upgrade", "websocket") {
-		return conn_err
-	}
-	if !containsInHeader(resp.Header, "Connection", "Upgrade") {
-		return conn_err
-	}
-	if resp.Header.Get("Sec-Websocket-Accept") != handshakeAccept(key) {
-		return conn_err
-	}
+	return nil
 }
 
 // create 'Sec-Websocket-Key' header value
@@ -140,7 +129,7 @@ func handshakeKey() string {
 	src := make([]byte, SEC_WEBSOCKET_KEY_BYTES)
 	rand.Seed(time.Now().UnixNano())
 	for i := range src {
-		src[i] = byte(rand.Intn(256))
+		src[i] = byte(rand.Intn(0x100))
 	}
 	return base64.StdEncoding.EncodeToString(src)
 }
