@@ -25,6 +25,11 @@ const (
 	FRAME_TYPE_FURTHER_CONTROL5
 )
 
+// 所有控制帧可以带最多125字节数据
+const CONTROL_FRAME_MAX_PAYLOAD_LEN = 0x7d
+
+const MAX_PAYLOAD_LEN = ^uint64(0) >> 1
+
 type frameType byte
 type frame []byte
 
@@ -84,6 +89,7 @@ func (f frame) rsv3() frame {
 	return f
 }
 
+// opcode 范围为0到15，超出则求余
 func (f frame) opcode(t frameType) frame {
 	if len(f) == 0 {
 		f = make(frame, 1)
@@ -92,7 +98,19 @@ func (f frame) opcode(t frameType) frame {
 	return f
 }
 
+func (f frame) getOpcode() frameType {
+	if len(f) == 0 {
+		return 0
+	}
+	return frameType(f[0] & 0xff)
+}
+
+// The maximum length of the payload is MAX_PAYLOAD_LEN,
+// and the excess will be set directly to the maximum value.
 func (f frame) payloadLen(bytes uint64) frame {
+	if bytes > MAX_PAYLOAD_LEN {
+		bytes = MAX_PAYLOAD_LEN
+	}
 	switch {
 	case bytes <= 0x7d:
 		t := make(frame, 2)
