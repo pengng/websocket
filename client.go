@@ -43,12 +43,15 @@ func Dial(rawurl string, config *tls.Config) (*socket, error) {
 		return nil, err
 	}
 	k := handshakeKey()
-	handshake(conn, u.Path, k)
+	err = handshake(conn, u, k)
+	if err != nil {
+		return nil, err
+	}
 	err = parseHandshake(conn, k)
 	if err != nil {
 		return nil, err
 	}
-	return &socket{conn: conn}, nil
+	return &socket{conn: conn, state: STATE_OPEN, mask: true}, nil
 }
 
 func parseUrl(rawurl string) (*url.URL, error) {
@@ -62,22 +65,31 @@ func parseUrl(rawurl string) (*url.URL, error) {
 	if !(u.Scheme == "ws" || u.Scheme == "wss") {
 		return nil, errors.New(fmt.Sprintf("parseUrl() The URL's scheme must be either 'ws' or 'wss'. %q is not allowed.", u.Scheme))
 	}
+	if u.Port() == "" {
+		if u.Scheme == "ws" {
+			u.Host += ":80"
+		} else {
+			u.Host += ":443"
+		}
+	}
+	if u.Path == "" {
+		u.Path = "/"
+	}
 	return u, nil
 }
 
-func handshake(w io.Writer, pathname, key string) error {
-	if ok, _ := regexp.MatchString(`^/.*`, pathname); !ok {
-		return errors.New(fmt.Sprintf("handshake() The pathname %q is invalid.", pathname))
-	}
+func handshake(w io.Writer, u *url.URL, key string) error {
 	if ok, _ := regexp.MatchString(`^[a-zA-Z0-9+/]{22}==$`, key); !ok {
 		return errors.New("handshake() The key must be base64-encoded 16-bit bytes")
 	}
-	fmt.Fprintf(w, "GET %s HTTP/1.1\r\n\r\n", pathname)
+	fmt.Fprintf(w, "GET %s HTTP/1.1\r\n", u.Path)
 	h := make(http.Header)
+	h.Add("Host", u.Host)
 	h.Add("Upgrade", "websocket")
 	h.Add("Connection", "Upgrade")
 	h.Add("Sec-Websocket-Key", key)
 	h.Add("Sec-Websocket-Version", SEC_WEBSOCKET_VERSION)
+	h.Add("Content-Length", "0")
 	h.Write(w)
 	_, err := fmt.Fprint(w, "\r\n")
 	return err
@@ -97,7 +109,7 @@ func parseHandshake(r io.Reader, key string) error {
 	if len(a) < 3 {
 		return errors.New(fmt.Sprintf("parseHandshake() The text %q don't like headline.", l))
 	}
-	c, err := strconv.ParseInt(a[1], 10, 8)
+	c, err := strconv.ParseUint(a[1], 10, 8)
 	if err != nil {
 		return err
 	}
@@ -106,6 +118,8 @@ func parseHandshake(r io.Reader, key string) error {
 		s := strings.Split(rd.Text(), ": ")
 		if len(s) == 2 {
 			h.Add(s[0], s[1])
+		} else {
+			break
 		}
 	}
 	if c != http.StatusSwitchingProtocols {

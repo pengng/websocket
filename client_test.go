@@ -28,23 +28,47 @@ func TestParseUrl(t *testing.T) {
 			t.Errorf("parseUrl(%q) should return err", in)
 		}
 	}
+
+	rawurl := "ws://localhost"
+	if u, _ := parseUrl(rawurl); u.Path != "/" {
+		t.Errorf("parseUrl(%q) should set default path %q", rawurl, "/")
+	}
+
+	rawurl = "ws://localhost/"
+	if u, _ := parseUrl(rawurl); u.Host != "localhost:80" {
+		t.Errorf("parseUrl(%q) should set default port %q", rawurl, "80")
+	}
 }
 
 func TestHandshake(t *testing.T) {
 	var b bytes.Buffer
-	var p, k = "/chat", handshakeKey()
-	err := handshake(&b, p, k)
+	p, k := "ws://localhost:3000/chat", handshakeKey()
+	u, err := parseUrl(p)
+	if err != nil {
+		t.Errorf("parseUrl() should be ok")
+	}
+	err = handshake(&b, u, k)
 	if err != nil {
 		t.Errorf("handshake() should be ok")
 	}
-	s := fmt.Sprintf("GET %s HTTP/1.1\r\n\r\nConnection: Upgrade\r\nSec-Websocket-Key: %s\r\nSec-Websocket-Version: 13\r\nUpgrade: websocket\r\n\r\n", p, k)
+	s := fmt.Sprintf("GET %s HTTP/1.1\r\nConnection: Upgrade\r\nContent-Length: 0\r\nHost: localhost:3000\r\nSec-Websocket-Key: %s\r\nSec-Websocket-Version: 13\r\nUpgrade: websocket\r\n\r\n", u.Path, k)
 	if b.String() != s {
 		t.Errorf("handshake() The correct http message should be written")
 	}
 	k = "111111111111111111111111"
-	err = handshake(&b, p, k)
+	err = handshake(&b, u, k)
 	if err == nil {
 		t.Errorf("handshake() should return err")
+	}
+}
+
+func TestParseHandshake(t *testing.T) {
+	msg := "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"
+	k := "1234"
+	var b bytes.Buffer
+	b.WriteString(msg)
+	if err := parseHandshake(&b, k); err == nil {
+		t.Errorf("parseHandshake() should return error")
 	}
 }
 
