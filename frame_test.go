@@ -59,7 +59,18 @@ func TestOpcode(t *testing.T) {
 	var c byte = 0x11
 	f = f.opcode(frameType(c))
 	if f[0]&0xf != c&0xf {
-		t.Errorf("opcode(t) should set opcode as t mod 16 if it more than 4 bits")
+		t.Errorf("opcode(t) should set opcode as t mod 16 if it more than 4 bits\n")
+	}
+}
+
+func TestGetOpcode(t *testing.T) {
+	var f frame
+	if f.getOpcode() != 0 {
+		t.Errorf("getOpcode() zero should be returned when the frame is nil\n")
+	}
+	f = f.opcode(FRAME_TYPE_BINARY)
+	if f.getOpcode() != FRAME_TYPE_BINARY {
+		t.Errorf("getOpcode() should return %d\n", FRAME_TYPE_BINARY)
 	}
 }
 

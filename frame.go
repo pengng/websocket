@@ -102,7 +102,7 @@ func (f frame) getOpcode() frameType {
 	if len(f) == 0 {
 		return 0
 	}
-	return frameType(f[0] & 0xff)
+	return frameType(f[0] & 0xf)
 }
 
 // The maximum length of the payload is MAX_PAYLOAD_LEN,
